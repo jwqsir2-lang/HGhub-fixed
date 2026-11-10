@@ -1,0 +1,53 @@
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows x64 (portable exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 前端类型检查 + 打包
+        run: pnpm build
+
+      - name: 编译 Tauri（只出 exe，不打安装包）
+        run: pnpm tauri build --no-bundle
+
+      - name: 收集产物
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $bin = "src-tauri/target/release/huangguo-client.exe"
+          if (-not (Test-Path $bin)) {
+            $bin = (Get-ChildItem "src-tauri/target/release" -Filter *.exe | Select-Object -First 1).FullName
+          }
+          Copy-Item $bin "artifacts/HGhub.exe"
+          Get-ChildItem artifacts | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HGhub-windows-x64
+          path: artifacts/HGhub.exe
+          if-no-files-found: error
