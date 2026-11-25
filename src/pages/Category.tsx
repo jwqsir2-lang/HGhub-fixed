@@ -9,8 +9,8 @@ import { IBack, IChevR, IGrid, ITrophy } from "../icons";
 export const CHANNELS = [
   { cate: "ai-duanju", name: "AI成人短剧", desc: "高能反转 · 一口气看完" },
   { cate: "ai-manju", name: "AI成人漫剧", desc: "国创漫剧 · 每周更新" },
-  { cate: "ai-huanlian", name: "AI换脸", desc: "换脸演绎 · 全新剧情" },
-  { cate: "ai-mogai", name: "AI魔改", desc: "魔改名场面 · 脑洞大开" },
+  // ai-huanlian（AI换脸）/ ai-mogai（AI魔改）已于 2026-11 被站方下线
+  //（接口回 410「内容已下线」），故不在列表中；站方恢复后再加回。
 ] as const;
 
 /* ================= 分类总览 ================= */
