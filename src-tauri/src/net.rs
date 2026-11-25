@@ -1,7 +1,8 @@
 //! 网络层：与上游站点对话。
 //!
-//! 站点把全部 `/api/**` 调用收敛成 `POST /api/edge/request` 的信封，
-//! 我们只实现这一个入口，其余接口都是「填 path」。
+//! 站点曾把全部 `/api/**` 调用收敛成 `POST /api/edge/request` 的信封；
+//! 该信封接口已于 2026-11 被站点停用（503「接口已停用」），现全部直连 REST，
+//! 只实现 `edge()` 这一个入口，其余接口都是「填 path」。
 //!
 //! # 代理（双模式，v1.2.3）
 //!
@@ -25,8 +26,6 @@
 //! 排查手段：`net_diag` 命令会输出 DNS/HTTP/环境变量快照。
 
 use crate::network_policy;
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -617,7 +616,7 @@ fn edge_operation(path: &str) -> &'static str {
     }
 }
 
-/// 仅无请求体、无凭据的逻辑 GET 可以迁移网关；信封本身仍使用 POST。
+/// 仅无请求体、无凭据的逻辑 GET 可以迁移网关。
 fn edge_redirect_target(
     current: &url::Url,
     status: u16,
@@ -630,7 +629,7 @@ fn edge_redirect_target(
     network_policy::redirect_target(current, location)
 }
 
-/// 业务请求：走边缘信封。
+/// 业务请求：直连 REST（信封接口已于 2026-11 被站点停用，见函数内注）。
 pub async fn edge(
     origin: &str,
     method: &str,
@@ -649,21 +648,10 @@ pub async fn edge(
     {
         return Err("镜像线路仅供游客浏览；登录/注册请切换到固定线路".into());
     }
-    let (encoded, ctype) = match &body {
-        Some(v) => (
-            B64.encode(serde_json::to_vec(v).map_err(|e| e.to_string())?),
-            "application/json",
-        ),
-        None => (String::new(), ""),
-    };
-    let envelope = json!({
-        "method": method,
-        "path": path,
-        "body": encoded,
-        "content_type": ctype,
-    });
-
-    let url = format!("{cur}/api/edge/request");
+    // 2026-11-25：站点已停用边缘信封接口（POST /api/edge/request 回
+    // 503「接口已停用」），业务请求改为直连 REST（{base}{path}）。
+    // 直连回包与信封回包同构（{data,status,msg}），下方拆包逻辑不变。
+    let url = format!("{cur}{path}");
     let referer = format!("{cur}/");
     let token = token.map(|s| s.to_string());
 
@@ -681,7 +669,7 @@ pub async fn edge(
     let value = with_retry(can_retry, || {
         attempt += 1;
         let attempt = attempt;
-        let envelope = envelope.clone();
+        let req_body = body.clone();
         let token = token.clone();
         let url = url.clone();
         let referer = referer.clone();
@@ -700,10 +688,16 @@ pub async fn edge(
                     let (target, client) = client_for(next.as_str()).await?;
                     target_host = target.host_str().unwrap_or("").to_string();
                     let mut req = client
-                        .post(target.clone())
+                        .request(
+                            reqwest::Method::from_bytes(method.as_bytes())
+                                .unwrap_or(reqwest::Method::GET),
+                            target.clone(),
+                        )
                         .header("Accept", "application/json")
-                        .header("Referer", &referer)
-                        .json(&envelope);
+                        .header("Referer", &referer);
+                    if let Some(v) = &req_body {
+                        req = req.json(v);
+                    }
                     if let Some(t) = token.as_deref() {
                         if !t.is_empty() {
                             req = req.header("Authorization", format!("Bearer {t}"));
@@ -716,7 +710,7 @@ pub async fn edge(
                     let ctype = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
                     response_kind = if ctype.contains("json") { "json" } else if ctype.contains("html") { "html" } else { "other" };
                     gateway = if resp.headers().contains_key("x-amz-cf-id") { "cloudfront" } else if resp.headers().contains_key("cf-ray") { "cloudflare" } else { "other" };
-                    // 逐跳重建并检查客户端；不自动把信封 POST 改成无信封 GET。
+                    // 逐跳重建并检查客户端；重定向只对游客 GET 放行。
                     if status.is_redirection() {
                         if hop == 5 {
                             return Err("重定向次数超过限制".into());
