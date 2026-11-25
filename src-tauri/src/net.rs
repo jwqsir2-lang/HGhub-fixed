@@ -3,18 +3,22 @@
 //! 站点把全部 `/api/**` 调用收敛成 `POST /api/edge/request` 的信封，
 //! 我们只实现这一个入口，其余接口都是「填 path」。
 //!
-//! # 代理
+//! # 代理（双模式，v1.2.3）
 //!
 //! 客户端的流量**全部**走本文件的 reqwest，跟 WebView2 无关，所以它既不共享
 //! 浏览器的代理设置，也不共享浏览器的证书库。
 //!
-//! * v1.2.2 起**默认直连、不跟随系统代理**（`build_client` 里 `.no_proxy()`）。
-//!   此前版本开了 `system-proxy` feature 跟随 Windows 系统代理，实测在常见
-//!   家庭网络下反而全灭：代理出口 IP 被站点网关拒绝回 503；代理软件退出后
-//!   注册表残留死代理时，全部请求死于 `tunnel error`（os error 10061）。
-//!   早期版本一直是直连且工作正常，站点与镜像线路本身也可直连。
-//! * 确实需要代理的环境（公司内网等）：环境变量
-//!   `HGHUB_PROXY=http://127.0.0.1:7897` 显式指定，优先级高于直连默认。
+//! 上游站点在大陆网络被屏蔽、直连超时，经代理是刚需；但代理软件退出后
+//! 注册表残留的死代理、或节点异常时，直连 / TUN 又是唯一活路。单一模式
+//! 总有一类网络全灭（v1.2.1 只跟系统代理、v1.2.2 只直连，都实测翻车），
+//! 故 v1.2.3 起双模式自动切换（见 `USE_PROXY` / `detect_proxy_mode`）：
+//!
+//! * 初始模式按本机代理配置探测：`HGHUB_PROXY` / 代理环境变量 /
+//!   Windows 注册表系统代理，任一存在 → 先走代理；否则先直连。
+//! * 代理模式下域名交给代理解析（本地 DNS 对被屏蔽域名多为污染结果），
+//!   不固定本地解析地址；直连模式沿用 network_policy 检查 + 地址固定。
+//! * 请求失败（连接类错误或 502/503/504）时 `heal_client` 翻转模式并
+//!   重建客户端，`with_retry` 的下一次尝试自动换一条路。
 //! * Android 没有注册表可读，系统「Wi-Fi 代理」同样不被 reqwest 采用；
 //!   安卓上只有 VPN/TUN 模式（VpnService 抓全流量）才有效。
 //!
@@ -152,7 +156,6 @@ fn media_headers() -> Vec<(String, String)> {
 }
 
 /// 手动指定代理（排查 / 公司内网用）：`HGHUB_PROXY=http://127.0.0.1:7897`。
-/// 不设时默认直连，不跟随系统代理（v1.2.2 起，理由见 `build_client`）。
 fn proxy_override() -> Option<String> {
     std::env::var("HGHUB_PROXY")
         .ok()
@@ -160,12 +163,88 @@ fn proxy_override() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// 当前首选传输模式：true = 经代理，false = 直连。
+///
+/// v1.2.3 起双模式自动切换：上游站点在大陆网络被屏蔽、必须经代理，
+/// 而代理残留（死端口）或节点异常时直连 / TUN 又是唯一活路——单一模式
+/// 总有一类网络全灭。初始模式按本机代理配置探测，请求失败时
+/// `heal_client` 翻转到另一种模式重试。
+static USE_PROXY: Lazy<RwLock<bool>> = Lazy::new(|| RwLock::new(detect_proxy_mode()));
+
+fn transport_use_proxy() -> bool {
+    USE_PROXY.read().map(|v| *v).unwrap_or(false)
+}
+
+fn flip_transport_mode() {
+    if let Ok(mut v) = USE_PROXY.write() {
+        *v = !*v;
+    }
+}
+
+/// 探测本机是否配置了代理（决定初始模式）。
+fn detect_proxy_mode() -> bool {
+    if proxy_override().is_some() {
+        return true;
+    }
+    for k in [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        if std::env::var(k)
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    #[cfg(windows)]
+    {
+        if windows_system_proxy_enabled() {
+            return true;
+        }
+    }
+    false
+}
+
+/// 读注册表 `HKCU\...\Internet Settings`：`ProxyEnable=1` 且 `ProxyServer` 非空。
+#[cfg(windows)]
+fn windows_system_proxy_enabled() -> bool {
+    let query = |value: &str| -> Option<String> {
+        let out = std::process::Command::new("reg")
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                "/v",
+                value,
+            ])
+            .output()
+            .ok()?;
+        String::from_utf8(out.stdout).ok()
+    };
+    let enabled = query("ProxyEnable")
+        .map(|s| s.contains("0x1"))
+        .unwrap_or(false);
+    let server = query("ProxyServer")
+        .map(|s| {
+            s.split("REG_SZ")
+                .nth(1)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    enabled && server
+}
+
 /// 按**当前**系统代理设置新建一个客户端。
 ///
 /// 注意：reqwest 的 `system-proxy` 只在构建时读一次注册表 / 环境变量。代理软件被关掉后，
 /// 旧客户端仍会往 `127.0.0.1:7897` 建隧道，症状是满屏 `tunnel error: failed to create
 /// underlying connection`（浏览器却是通的，因为它每次都重读系统代理）。所以这里允许重建。
-fn build_client(host: &str, addrs: &[SocketAddr]) -> Result<reqwest::Client, String> {
+fn build_client(host: &str, addrs: &[SocketAddr], use_proxy: bool) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .user_agent(UA)
         .timeout(Duration::from_secs(20))
@@ -175,20 +254,22 @@ fn build_client(host: &str, addrs: &[SocketAddr]) -> Result<reqwest::Client, Str
         .gzip(true)
         .brotli(true)
         .pool_idle_timeout(Duration::from_secs(60));
-    if !addrs.is_empty() {
-        builder = builder.resolve_to_addrs(host, addrs);
-    }
-    if let Some(p) = proxy_override() {
-        // 错误信息不能含原始代理 URL（其中可能有用户名/密码）。
-        let proxy = reqwest::Proxy::all(&p).map_err(|_| "HGHUB_PROXY 配置无效（已隐藏原始值）")?;
-        builder = builder.proxy(proxy);
+    if use_proxy {
+        // 代理模式：目标域名交给代理解析（本地 DNS 对被屏蔽域名不可信、
+        // 解析结果多为污染地址），因此不固定本地解析地址。
+        // 未显式指定 HGHUB_PROXY 时，用 reqwest 默认的系统代理探测
+        // （Windows 注册表 + 环境变量）。
+        if let Some(p) = proxy_override() {
+            // 错误信息不能含原始代理 URL（其中可能有用户名/密码）。
+            let proxy = reqwest::Proxy::all(&p).map_err(|_| "HGHUB_PROXY 配置无效（已隐藏原始值）")?;
+            builder = builder.proxy(proxy);
+        }
     } else {
-        // v1.2.2：默认直连，不跟随系统代理（与早期版本行为一致）。
-        // 跟随系统代理时，代理出口被站点网关拒绝会回 503；代理软件退出后
-        // 注册表残留的死代理（127.0.0.1:7897 无人监听）更会让全部请求死在
-        // tunnel error / os error 10061。站点与镜像线路本身可直连，
-        // 需要代理的环境显式设 HGHUB_PROXY 即可（见上方 proxy_override）。
+        // 直连模式：不跟随任何代理，并固定经 network_policy 检查过的地址。
         builder = builder.no_proxy();
+        if !addrs.is_empty() {
+            builder = builder.resolve_to_addrs(host, addrs);
+        }
     }
     builder
         .build()
@@ -213,19 +294,24 @@ async fn client_for(raw: &str) -> Result<(url::Url, Arc<reqwest::Client>), Strin
     let target = network_policy::parse_target_with_mode(raw, strict)?;
     let host = target.host_str().ok_or("目标缺少主机名")?;
     let port = target.port_or_known_default().ok_or("目标端口无效")?;
-    let key = format!("{strict}:{host}:{port}");
+    let use_proxy = transport_use_proxy();
+    let key = format!(
+        "{strict}:{}:{host}:{port}",
+        if use_proxy { "proxy" } else { "direct" }
+    );
     {
         let cache = CLIENTS.lock().map_err(|_| "HTTP 客户端锁失败")?;
         if let Some(http) = cached_client(&cache, &key, Instant::now()) {
             return Ok((target, http));
         }
     }
-    let addrs = if strict {
+    // 代理模式下域名交给代理解析，不在本地解析/固定地址（理由见 build_client）。
+    let addrs = if strict && !use_proxy {
         network_policy::resolve_target(&target, strict).await?
     } else {
         Vec::new()
     };
-    let http = Arc::new(build_client(host, &addrs)?);
+    let http = Arc::new(build_client(host, &addrs, use_proxy)?);
     let now = Instant::now();
     let mut cache = CLIENTS.lock().map_err(|_| "HTTP 客户端锁失败")?;
     // 同时到达的请求可能已完成解析；不延长已有结果的有效期。
@@ -343,7 +429,14 @@ static LAST_HEAL: Lazy<std::sync::Mutex<Option<Instant>>> =
 /// 请求失败后按需重建客户端：代理隧道错误、连接被拒 / 超时都算「网络环境可能变了」。
 /// 3 秒内只重建一次，批量探测不会反复重建。
 pub fn heal_client(reason: &str) {
-    let connectish = reason.contains("Connect")
+    // 502/503/504 在本应用的语境下多为当前传输的上游失败（代理节点回的
+    // 网关错误），同样值得换一种传输模式重试。
+    let gateway = matches!(reason, "HTTP 502" | "HTTP 503" | "HTTP 504")
+        || reason.starts_with("HTTP 502 ")
+        || reason.starts_with("HTTP 503 ")
+        || reason.starts_with("HTTP 504 ");
+    let connectish = gateway
+        || reason.contains("Connect")
         || reason.contains("timed out")
         || reason.contains("refused")
         || reason.contains("dns");
@@ -361,6 +454,9 @@ pub fn heal_client(reason: &str) {
     }
     *last = Some(Instant::now());
     drop(last);
+    // 当前传输模式失败多半是模式与网络不匹配（代理死端口 / 直连被屏蔽），
+    // 翻转到另一种模式再重建，让 with_retry 的下一次尝试换一条路走。
+    flip_transport_mode();
     refresh_client();
 }
 
