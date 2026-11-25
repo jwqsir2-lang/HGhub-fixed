@@ -3,21 +3,22 @@
 //! 站点把全部 `/api/**` 调用收敛成 `POST /api/edge/request` 的信封，
 //! 我们只实现这一个入口，其余接口都是「填 path」。
 //!
-//! # 代理（用户反馈「浏览器能开、HGhub 打不开」的根因就在这里）
+//! # 代理
 //!
 //! 客户端的流量**全部**走本文件的 reqwest，跟 WebView2 无关，所以它既不共享
-//! 浏览器的代理设置，也不共享浏览器的证书库：
+//! 浏览器的代理设置，也不共享浏览器的证书库。
 //!
-//! * reqwest 只有开了 `system-proxy` feature 才会读 Windows 系统代理
-//!   （`HKCU\...\Internet Settings` 的 `ProxyEnable`/`ProxyServer`/`ProxyOverride`）。
-//!   本 crate 用 `default-features = false`，早先漏了这个 feature ⇒ 永远直连，
-//!   只有 TUN/虚拟网卡这种网络层接管才「看起来能用」。
-//! * 即使开了 `system-proxy`，PAC（`AutoConfigURL`）也不被支持，只认固定代理。
+//! * v1.2.2 起**默认直连、不跟随系统代理**（`build_client` 里 `.no_proxy()`）。
+//!   此前版本开了 `system-proxy` feature 跟随 Windows 系统代理，实测在常见
+//!   家庭网络下反而全灭：代理出口 IP 被站点网关拒绝回 503；代理软件退出后
+//!   注册表残留死代理时，全部请求死于 `tunnel error`（os error 10061）。
+//!   早期版本一直是直连且工作正常，站点与镜像线路本身也可直连。
+//! * 确实需要代理的环境（公司内网等）：环境变量
+//!   `HGHUB_PROXY=http://127.0.0.1:7897` 显式指定，优先级高于直连默认。
 //! * Android 没有注册表可读，系统「Wi-Fi 代理」同样不被 reqwest 采用；
 //!   安卓上只有 VPN/TUN 模式（VpnService 抓全流量）才有效。
 //!
-//! 排查手段：环境变量 `HGHUB_PROXY=http://127.0.0.1:7897` 可强制指定代理，
-//! `net_diag` 命令会输出 DNS/HTTP/环境变量快照。
+//! 排查手段：`net_diag` 命令会输出 DNS/HTTP/环境变量快照。
 
 use crate::network_policy;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -151,7 +152,7 @@ fn media_headers() -> Vec<(String, String)> {
 }
 
 /// 手动指定代理（排查 / 公司内网用）：`HGHUB_PROXY=http://127.0.0.1:7897`。
-/// 不设时交给 reqwest 的 `system-proxy` 探测（注册表 + 环境变量）。
+/// 不设时默认直连，不跟随系统代理（v1.2.2 起，理由见 `build_client`）。
 fn proxy_override() -> Option<String> {
     std::env::var("HGHUB_PROXY")
         .ok()
@@ -181,6 +182,13 @@ fn build_client(host: &str, addrs: &[SocketAddr]) -> Result<reqwest::Client, Str
         // 错误信息不能含原始代理 URL（其中可能有用户名/密码）。
         let proxy = reqwest::Proxy::all(&p).map_err(|_| "HGHUB_PROXY 配置无效（已隐藏原始值）")?;
         builder = builder.proxy(proxy);
+    } else {
+        // v1.2.2：默认直连，不跟随系统代理（与早期版本行为一致）。
+        // 跟随系统代理时，代理出口被站点网关拒绝会回 503；代理软件退出后
+        // 注册表残留的死代理（127.0.0.1:7897 无人监听）更会让全部请求死在
+        // tunnel error / os error 10061。站点与镜像线路本身可直连，
+        // 需要代理的环境显式设 HGHUB_PROXY 即可（见上方 proxy_override）。
+        builder = builder.no_proxy();
     }
     builder
         .build()
