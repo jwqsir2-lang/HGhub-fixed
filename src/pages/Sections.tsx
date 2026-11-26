@@ -110,7 +110,7 @@ export function SectionPage({ section, name, onBack, wide }: {
       </div>
       <div className="flex-1 scroll-y px-4 pt-3 pb-8">
         {items.length ? (
-          <Masonry videos={items} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: items.map((x) => x.id), index: items.findIndex((x) => x.id === v.id), title: name })} />
+          <Masonry videos={items} wide={wide} dense onOpen={(v) => push({ kind: "feed", videoIds: items.map((x) => x.id), index: items.findIndex((x) => x.id === v.id), title: name })} />
         ) : err ? (
           <Empty icon={<IGrid size={26} />} title="加载失败" sub={err} action="重试" onAction={() => void loadMoreRef.current()} />
         ) : (

@@ -60,3 +60,17 @@ GET /api/home/recommends?page={p}&size={s}  → 精选推荐（站方推荐序�
 - 点击菜单项直接打开对应板块页（SectionPage 不变），高亮逻辑与
   排行榜/设置同套（栈顶为该板块页时亮起、在该页时重复点击不叠页）。
 - 图标：黄果原创=场记板（IClapper）、最近上新=时钟（IClock）、精选推荐=星标（IStar）。
+
+## v1.2.8 修复（2026-11-27，站长真机反馈）
+
+1. **板块图片全灭**：`/api/home/latest|recommends` 的 cover 是相对路径
+   （`/upload_01/...`），feed/分类接口返回的是图片 CDN 绝对地址；
+   相对路径经前端本地协议（hg.localhost/img）取图必然失败。
+   修复：Rust `normalize_home_page` 里把相对 cover 补成
+   `https://pic.qnlycc.cn` + 路径（与其它接口同一 CDN，站点首页自身
+   亦如此拼；该 CDN 无签名参数可访问，实测 200；源站域名直出该路径为 404）。
+2. **尺寸中和**（站长：板块图偏大、分类图偏小）：
+   - 板块页 Masonry 加 dense 变体：宽屏 3→4 列（xl 4→5 列），单图变小；
+   - 分类总览横滑卡 RowCard 宽度 104→144px，单图变大。
+   频道页/搜索页的 Masonry 不受影响。
+3. 站长新规：Release 资产从此保留 APK，不再删除。

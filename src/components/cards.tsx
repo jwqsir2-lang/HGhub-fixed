@@ -31,12 +31,13 @@ export function WaterfallCard({ v, onOpen }: { v: VideoCard; onOpen: () => void 
 }
 
 /* ——— 近无缝瀑布流 ——— */
-export function Masonry({ videos, onOpen, wide = false, gap = "gap-1" }: {
-  videos: VideoCard[]; onOpen: (v: VideoCard) => void; wide?: boolean; gap?: string;
+export function Masonry({ videos, onOpen, wide = false, gap = "gap-1", dense = false }: {
+  videos: VideoCard[]; onOpen: (v: VideoCard) => void; wide?: boolean; gap?: string; dense?: boolean;
 }) {
   const mb = gap === "gap-1" ? "mb-1" : "mb-1.5";
+  const cols = dense && wide ? "columns-4 xl:columns-5" : wide ? "columns-3 xl:columns-4" : "columns-2";
   return (
-    <div className={`${wide ? "columns-3 xl:columns-4" : "columns-2"} ${gap} [column-fill:balance]`}>
+    <div className={`${cols} ${gap} [column-fill:balance]`}>
       {videos.map((v) => (
         <div key={v.id} className={`break-inside-avoid ${mb}`}>
           <WaterfallCard v={v} onOpen={() => onOpen(v)} />
@@ -49,7 +50,7 @@ export function Masonry({ videos, onOpen, wide = false, gap = "gap-1" }: {
 /* ——— 分类横向卡片 ——— */
 export function RowCard({ v, onOpen }: { v: VideoCard; onOpen: () => void }) {
   return (
-    <button onClick={onOpen} className="w-[104px] shrink-0 text-left snap-start pressable group">
+    <button onClick={onOpen} className="w-[144px] shrink-0 text-left snap-start pressable group">
       <div className="relative w-full rounded-(--r-sm) overflow-hidden bg-s1 elev-1" style={{ paddingTop: "133%" }}>
         <Img src={v.cover} />
         <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/75 to-transparent" />

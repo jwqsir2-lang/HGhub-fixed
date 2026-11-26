@@ -361,6 +361,11 @@ pub async fn api_category(
 /// 站点首页板块接口（`/api/home/latest`、`/api/home/recommends`）返回
 /// `{items,total,page,size}`，与 `/api/videos` 的 `{items,pagination}` 不同，
 /// 在此归一化成应用统一的分页形状，前端列表逻辑可直接复用。
+/// 另需补全封面：home 接口的 cover 是相对路径（`/upload_01/...`），而
+/// feed/分类接口返回的是图片 CDN 绝对地址；相对路径经前端本地协议取图
+/// 必然失败（v1.2.6/1.2.7 板块图片全灭即此因）。在此补成绝对地址——
+/// 域名与其它接口一致（pic.qnlycc.cn，站点首页自身亦如此拼），
+/// 该 CDN 不带签名参数也可访问（2026-11-27 实测 200）。
 fn normalize_home_page(mut data: Value, page: u32, size: u32) -> Value {
     let total = data.get("total").and_then(Value::as_u64).unwrap_or(0);
     let pages = if size > 0 {
@@ -373,6 +378,20 @@ fn normalize_home_page(mut data: Value, page: u32, size: u32) -> Value {
             "pagination".into(),
             json!({ "page": page, "size": size, "total": total, "pages": pages }),
         );
+    }
+    const IMG_CDN: &str = "https://pic.qnlycc.cn";
+    if let Some(items) = data.get_mut("items").and_then(Value::as_array_mut) {
+        for item in items.iter_mut() {
+            if let Some(cover) = item.get_mut("cover") {
+                if let Some(s) = cover.as_str() {
+                    if s.starts_with('/') {
+                        *cover = Value::String(format!("{IMG_CDN}{s}"));
+                    } else if !s.is_empty() && !s.starts_with("http") {
+                        *cover = Value::String(format!("{IMG_CDN}/{s}"));
+                    }
+                }
+            }
+        }
     }
     data
 }
