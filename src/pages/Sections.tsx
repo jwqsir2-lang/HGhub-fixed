@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { VideoCard } from "../types";
 import { useStore, type SectionKind } from "../store";
-import { Masonry, RowCard } from "../components/cards";
+import { Masonry } from "../components/cards";
 import { Empty } from "../components/ui";
-import { IBack, IChevR, IGrid } from "../icons";
+import { IBack, IGrid } from "../icons";
 
-/* 首页板块（v1.2.6 新增）：与站点首页同名的三个板块。
+/* 首页板块（v1.2.6 新增，v1.2.7 改入口）：与站点首页同名的三个板块。
+   入口在桌面左侧栏「分类」与「我的」之间（见 components/DesktopChrome.tsx），
+   点击打开对应板块的分页网格页（本文件的 SectionPage）。
    数据源（2026-11-26 实测站点现行接口）：
    - 最近上新 → GET /api/home/latest（分页、发布时间倒序）
    - 精选推荐 → GET /api/home/recommends（分页、站方推荐序）
@@ -22,100 +24,7 @@ export const SECTIONS: { kind: SectionKind; name: string; desc: string }[] = [
 const ORIGINAL_BADGE = "黄果原创";
 const isOriginal = (v: VideoCard) => (v.badge || "") === ORIGINAL_BADGE;
 
-function RowStatus({ loading, error, onRetry }: { loading: boolean; error?: string; onRetry: () => void }) {
-  if (loading) return <div className="flex items-center px-2"><div className="w-6 h-6 spinner" /></div>;
-  if (error) return <button onClick={onRetry} className="text-[11px] text-mut pressable px-2 shrink-0">加载失败，点此重试</button>;
-  return <div className="text-[11px] text-mut px-2 shrink-0">暂无内容</div>;
-}
-
-/* ================= 板块总览 ================= */
-
-export function SectionsPage({ onBack }: { onBack: () => void }) {
-  const { push } = useStore();
-  const [rows, setRows] = useState<Record<SectionKind, VideoCard[]>>({ original: [], latest: [], recommends: [] });
-  const [loading, setLoading] = useState<Record<string, boolean>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
-
-  const load = useCallback(async (kind: SectionKind) => {
-    setLoading((m) => ({ ...m, [kind]: true }));
-    setErrors((m) => ({ ...m, [kind]: "" }));
-    try {
-      let list: VideoCard[] = [];
-      if (kind === "latest") {
-        list = (await api.homeLatest(1, 10))?.items || [];
-      } else if (kind === "recommends") {
-        list = (await api.homeRecommends(1, 10))?.items || [];
-      } else {
-        // 原创：扫上新前 3 页（每页 20 条）过滤角标，攒够 10 条即停
-        for (let p = 1; p <= 3 && list.length < 10; p++) {
-          const res = await api.homeLatest(p, 20);
-          list.push(...(res?.items || []).filter(isOriginal));
-          if (p >= (res?.pagination?.pages ?? p)) break;
-        }
-        list = list.slice(0, 10);
-      }
-      if (mounted.current) setRows((m) => ({ ...m, [kind]: list }));
-    } catch (e) {
-      if (mounted.current) setErrors((m) => ({ ...m, [kind]: (e as Error).message || "加载失败" }));
-    } finally {
-      if (mounted.current) setLoading((m) => ({ ...m, [kind]: false }));
-    }
-  }, []);
-
-  useEffect(() => { SECTIONS.forEach((s) => { void load(s.kind); }); }, [load]);
-
-  return (
-    <div className="absolute inset-0 bg-bg flex flex-col">
-      <div className="shrink-0 bg-s1" style={{ paddingTop: "var(--sat, 0px)" }}>
-        <div className="px-3 pt-2 pb-3 flex items-center gap-2.5">
-          <button onClick={onBack} className="w-10 h-10 rounded-full flex items-center justify-center text-on hover:bg-s3 pressable"><IBack size={20} /></button>
-          <span className="w-[40px] h-[40px] rounded-(--r-sm) bg-pc text-on-pc flex items-center justify-center"><IGrid size={21} strokeWidth={1.9} /></span>
-          <div className="flex-1 min-w-0">
-            <div className="text-[17px] font-bold text-on leading-tight">首页板块</div>
-            <div className="text-[10.5px] text-mut">黄果原创 · 最近上新 · 精选推荐</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex-1 scroll-y pb-24 pt-3">
-        {SECTIONS.map((s, si) => {
-          const list = rows[s.kind];
-          return (
-            <section key={s.kind} aria-label={s.name} className="mb-5 a-rise" style={{ animationDelay: `${Math.min(si * 50, 300)}ms` }}>
-              <button onClick={() => push({ kind: "section", section: s.kind, name: s.name })}
-                className="w-full flex items-center gap-2.5 px-4 mb-2.5 text-left pressable group">
-                <span className="w-[36px] h-[36px] rounded-(--r-sm) tonal flex items-center justify-center shrink-0 text-primary">
-                  <IGrid size={19} strokeWidth={1.9} />
-                </span>
-                <span className="flex-1 min-w-0">
-                  <span className="block text-[15.5px] font-semibold text-on leading-tight">{s.name}</span>
-                  <span className="block text-[10.5px] text-mut mt-0.5 truncate">{s.desc}</span>
-                </span>
-                <span className="flex items-center gap-0.5 text-[11.5px] text-mut group-hover:text-primary transition-colors">
-                  全部<IChevR size={14} />
-                </span>
-              </button>
-              <div className="scroll-x flex gap-2.5 px-4 snap-x">
-                {list.map((v) => (
-                  <RowCard key={v.id} v={v} onOpen={() => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: s.name })} />
-                ))}
-                {!list.length && <RowStatus loading={loading[s.kind] !== false} error={errors[s.kind]} onRetry={() => void load(s.kind)} />}
-              </div>
-            </section>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ================= 板块全部（分页网格） ================= */
+/* ================= 板块页（分页网格） ================= */
 
 export function SectionPage({ section, name, onBack, wide }: {
   section: SectionKind; name: string; onBack: () => void; wide: boolean;

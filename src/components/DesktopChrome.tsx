@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useStore, type Tab } from "../store";
+import { useStore, type SectionKind, type Tab } from "../store";
 import { APP_VERSION } from "../api";
 import { Avatar } from "./ui";
+import { SECTIONS } from "../pages/Sections";
 import {
-  IClose, IGrid, IGridF, IHome, IHomeF, IMinus, IMoon, IRestore, ISearch, ISettings, ISidebar,
-  ISquare, ISun, ITrophy, IUser, IUserF, Logo,
+  IClapper, IClock, IClose, IGrid, IGridF, IHome, IHomeF, IMinus, IMoon, IRestore, ISearch, ISettings, ISidebar,
+  ISquare, IStar, ISun, ITrophy, IUser, IUserF, Logo,
 } from "../icons";
 
 const appWindow = () => getCurrentWindow();
@@ -59,18 +60,35 @@ export function DesktopTitleBar({ collapsed, onToggle }: { collapsed: boolean; o
   );
 }
 
+const SECTION_ICONS: Record<SectionKind, typeof IClock> = {
+  original: IClapper,
+  latest: IClock,
+  recommends: IStar,
+};
+
 export function DesktopRail({ collapsed }: { collapsed: boolean }) {
   const { tab, setTab, user, setLoginOpen, push, platform, stack } = useStore();
-  /* 从侧栏进入的栈页（排行榜 / 设置）接管高亮，否则「我的」会一直亮着，看起来不像独立页面 */
+  /* 从侧栏进入的栈页（板块 / 排行榜 / 设置）接管高亮，否则「我的」会一直亮着，看起来不像独立页面 */
   const top = stack[stack.length - 1];
-  const railPage: "ranks" | "settings" | null =
-    top?.kind === "settings" ? "settings" : top?.kind === "ranks" ? "ranks" : null;
+  const railPage: "ranks" | "settings" | SectionKind | null =
+    top?.kind === "settings" ? "settings"
+      : top?.kind === "ranks" ? "ranks"
+        : top?.kind === "section" ? top.section
+          : null;
   const onTab = (key: Tab | "search") => !railPage && tab === key;
   const items: { key: Tab; label: string; Icon: typeof IHome; Filled: typeof IHomeF }[] = [
     { key: "home", label: "首页", Icon: IHome, Filled: IHomeF },
     { key: "category", label: "分类", Icon: IGrid, Filled: IGridF },
     { key: "profile", label: "我的", Icon: IUser, Filled: IUserF },
   ];
+  const renderTab = ({ key, label, Icon, Filled }: (typeof items)[number]) => (
+    <button key={key} aria-current={onTab(key) ? "page" : undefined}
+      className={`win-nav-item ${onTab(key) ? "is-selected" : ""}`}
+      onClick={() => setTab(key)}>
+      <span className="win-nav-symbol">{onTab(key) ? <Filled size={21} /> : <Icon size={21} strokeWidth={1.7} />}</span>
+      <span className="win-nav-copy">{label}</span>
+    </button>
+  );
   return (
     <nav className={`win-sidebar ${collapsed ? "is-compact" : ""}`} aria-label="主导航">
       <div className="win-sidebar-inner">
@@ -81,14 +99,21 @@ export function DesktopRail({ collapsed }: { collapsed: boolean }) {
           <kbd className="win-nav-key">/</kbd>
         </button>
         <div className="win-nav-items">
-          {items.map(({ key, label, Icon, Filled }) => (
-            <button key={key} aria-current={onTab(key) ? "page" : undefined}
-              className={`win-nav-item ${onTab(key) ? "is-selected" : ""}`}
-              onClick={() => setTab(key)}>
-              <span className="win-nav-symbol">{onTab(key) ? <Filled size={21} /> : <Icon size={21} strokeWidth={1.7} />}</span>
-              <span className="win-nav-copy">{label}</span>
-            </button>
-          ))}
+          {items.slice(0, 2).map(renderTab)}
+          {/* 首页板块（v1.2.7）：插在「分类」与「我的」之间，与其它菜单同级，点击打开板块页 */}
+          {SECTIONS.map((s) => {
+            const Icon = SECTION_ICONS[s.kind];
+            const on = railPage === s.kind;
+            return (
+              <button key={s.kind} aria-current={on ? "page" : undefined}
+                className={`win-nav-item ${on ? "is-selected" : ""}`}
+                onClick={() => { if (!on) push({ kind: "section", section: s.kind, name: s.name }); }}>
+                <span className="win-nav-symbol"><Icon size={21} strokeWidth={1.7} /></span>
+                <span className="win-nav-copy">{s.name}</span>
+              </button>
+            );
+          })}
+          {items.slice(2).map(renderTab)}
           <button className={`win-nav-item ${railPage === "ranks" ? "is-selected" : ""}`}
             aria-current={railPage === "ranks" ? "page" : undefined}
             onClick={() => { if (railPage !== "ranks") push({ kind: "ranks" }); }}>

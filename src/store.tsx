@@ -27,7 +27,6 @@ export type SectionKind = "original" | "latest" | "recommends";
 export type Page =
   | FeedContext
   | { kind: "channel"; key: string; cate: string; name: string }
-  | { kind: "sections"; key: string }
   | { kind: "section"; key: string; section: SectionKind; name: string }
   | { kind: "ranks"; key: string }
   | { kind: "settings"; key: string }
@@ -37,7 +36,6 @@ export type Page =
 export type PageInput =
   | { kind: "feed"; videoIds: number[]; index: number; title: string; source?: string; feedKind?: "video" | "post"; startEp?: number; startTime?: number }
   | { kind: "channel"; cate: string; name: string }
-  | { kind: "sections" }
   | { kind: "section"; section: SectionKind; name: string }
   | { kind: "ranks" }
   | { kind: "settings" }

@@ -6,7 +6,7 @@ import { runBack } from "./back";
 import Home from "./pages/Home";
 import Search, { RankPage } from "./pages/Search";
 import Category, { ChannelPage } from "./pages/Category";
-import { SectionPage, SectionsPage } from "./pages/Sections";
+import { SectionPage } from "./pages/Sections";
 import Profile from "./pages/Profile";
 import SettingsPage from "./pages/Settings";
 import Feed from "./components/Feed";
@@ -74,7 +74,6 @@ function StackPage({ page, onBack, wide, top, bottomInset }: {
     );
   }
   if (page.kind === "channel") return <ChannelPage cate={page.cate} name={page.name} onBack={onBack} wide={wide} />;
-  if (page.kind === "sections") return <SectionsPage onBack={onBack} />;
   if (page.kind === "section") return <SectionPage section={page.section} name={page.name} onBack={onBack} wide={wide} />;
   if (page.kind === "ranks") return <RankPage onBack={onBack} wide={wide} />;
   if (page.kind === "settings") return <SettingsPage onBack={onBack} wide={wide} />;
