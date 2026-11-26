@@ -16,6 +16,8 @@ export type VideoCard = {
   comment_count: number;
   is_finished: boolean;
   is_original: number;
+  /** 站点角标（如「黄果原创」）：/api/videos 不下发，首页板块接口有 */
+  badge?: string;
   created_at?: string;
   last_ep_at?: number;
   new_at?: number;

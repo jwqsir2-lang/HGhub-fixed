@@ -358,6 +358,51 @@ pub async fn api_category(
         .await
 }
 
+/// 站点首页板块接口（`/api/home/latest`、`/api/home/recommends`）返回
+/// `{items,total,page,size}`，与 `/api/videos` 的 `{items,pagination}` 不同，
+/// 在此归一化成应用统一的分页形状，前端列表逻辑可直接复用。
+fn normalize_home_page(mut data: Value, page: u32, size: u32) -> Value {
+    let total = data.get("total").and_then(Value::as_u64).unwrap_or(0);
+    let pages = if size > 0 {
+        total.div_ceil(u64::from(size))
+    } else {
+        0
+    };
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert(
+            "pagination".into(),
+            json!({ "page": page, "size": size, "total": total, "pages": pages }),
+        );
+    }
+    data
+}
+
+/// 首页板块 · 最近上新（站点同名接口，按发布时间倒序、可分页）
+#[tauri::command]
+pub async fn api_home_latest(
+    state: State<'_, Api>,
+    page: u32,
+    size: u32,
+) -> Result<Value, String> {
+    let data = state
+        .get(&format!("/api/home/latest?page={page}&size={size}"))
+        .await?;
+    Ok(normalize_home_page(data, page, size))
+}
+
+/// 首页板块 · 精选推荐（站点同名接口，站方推荐列表、可分页）
+#[tauri::command]
+pub async fn api_home_recommends(
+    state: State<'_, Api>,
+    page: u32,
+    size: u32,
+) -> Result<Value, String> {
+    let data = state
+        .get(&format!("/api/home/recommends?page={page}&size={size}"))
+        .await?;
+    Ok(normalize_home_page(data, page, size))
+}
+
 #[tauri::command]
 pub async fn api_rank(state: State<'_, Api>, kind: String) -> Result<Value, String> {
     let kind = match kind.as_str() {

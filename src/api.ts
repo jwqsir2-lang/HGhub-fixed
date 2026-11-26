@@ -76,6 +76,12 @@ export const api = {
   feed: (page = 1, size = 20) => call<Paged<VideoCard>>("api_feed", { page, size }),
   category: (cate: string, page = 1, size = 20) =>
     call<Paged<VideoCard>>("api_category", { cate, page, size }),
+  /* 首页板块：站点 /api/home/latest（最近上新）与 /api/home/recommends（精选推荐），
+     Rust 侧已归一化为 Paged 形状。黄果原创无独立接口，由板块页按 badge 过滤上新列表得到。 */
+  homeLatest: (page = 1, size = 20) =>
+    call<Paged<VideoCard>>("api_home_latest", { page, size }),
+  homeRecommends: (page = 1, size = 20) =>
+    call<Paged<VideoCard>>("api_home_recommends", { page, size }),
   rank: (kind: "hot" | "recommend" | "potential") =>
     call<{ type: string; items: RankItem[] }>("api_rank", { kind }),
   search: (q: string, page = 1, size = 20) =>
